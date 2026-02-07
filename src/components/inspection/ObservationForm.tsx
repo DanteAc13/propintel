@@ -5,8 +5,39 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Camera, Upload, X, Loader2, Check } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Camera, Upload, X, Loader2, Check, Sparkles } from 'lucide-react'
+import { toast } from 'sonner'
 import type { ObservationStatus, ObservationSeverity } from '@prisma/client'
+
+type AIAnalysis = {
+  component: string
+  condition: string
+  severity: 'SAFETY' | 'MAJOR' | 'MINOR' | 'COSMETIC'
+  description: string
+  recommended_action: string
+}
+
+const AI_SEVERITY_MAP: Record<string, ObservationSeverity> = {
+  SAFETY: 'SAFETY_HAZARD',
+  MAJOR: 'MAJOR_DEFECT',
+  MINOR: 'MINOR_DEFECT',
+  COSMETIC: 'COSMETIC',
+}
+
+const AI_CONDITION_TO_STATUS: Record<string, ObservationStatus> = {
+  deficient: 'DEFICIENT',
+  damaged: 'DEFICIENT',
+  broken: 'DEFICIENT',
+  failed: 'DEFICIENT',
+  deteriorated: 'DEFICIENT',
+  maintenance: 'MAINTENANCE_NEEDED',
+  aging: 'MAINTENANCE_NEEDED',
+  wear: 'MAINTENANCE_NEEDED',
+  functional: 'FUNCTIONAL',
+  good: 'FUNCTIONAL',
+  normal: 'FUNCTIONAL',
+}
 
 type Props = {
   sectionId: string
@@ -57,6 +88,8 @@ export function ObservationForm({
   const [isUploading, setIsUploading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [aiSuggested, setAiSuggested] = useState<Set<string>>(new Set())
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -104,6 +137,78 @@ export function ObservationForm({
 
   const handleRemoveMedia = (mediaId: string) => {
     setUploadedMedia((prev) => prev.filter((m) => m.id !== mediaId))
+  }
+
+  const handleAIAnalyze = async () => {
+    if (uploadedMedia.length === 0) return
+
+    setIsAnalyzing(true)
+    try {
+      // Fetch the first uploaded image to send to AI
+      const firstMedia = uploadedMedia[0]
+      const imageUrl = firstMedia.storage_url
+
+      // Fetch the image as a blob
+      const imageResponse = await fetch(imageUrl)
+      const imageBlob = await imageResponse.blob()
+
+      const formData = new FormData()
+      formData.append('image', imageBlob, 'photo.jpg')
+
+      const response = await fetch('/api/ai/analyze-photo', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'AI analysis failed')
+      }
+
+      const { analysis } = (await response.json()) as { analysis: AIAnalysis }
+      const suggested = new Set<string>()
+
+      // Map AI severity to observation severity
+      if (analysis.severity && AI_SEVERITY_MAP[analysis.severity]) {
+        setSeverity(AI_SEVERITY_MAP[analysis.severity])
+        suggested.add('severity')
+      }
+
+      // Map AI condition to observation status
+      if (analysis.condition) {
+        const conditionLower = analysis.condition.toLowerCase()
+        let matched = false
+        for (const [keyword, observationStatus] of Object.entries(AI_CONDITION_TO_STATUS)) {
+          if (conditionLower.includes(keyword)) {
+            setStatus(observationStatus)
+            suggested.add('status')
+            matched = true
+            break
+          }
+        }
+        if (!matched) {
+          setStatus('DEFICIENT')
+          suggested.add('status')
+        }
+      }
+
+      // Build notes from AI analysis
+      const noteParts: string[] = []
+      if (analysis.description) noteParts.push(analysis.description)
+      if (analysis.recommended_action) noteParts.push(`Recommended: ${analysis.recommended_action}`)
+      if (noteParts.length > 0) {
+        setInspectorNotes(noteParts.join('\n\n'))
+        suggested.add('notes')
+      }
+
+      setAiSuggested(suggested)
+      toast.success('AI analysis complete — review and adjust fields as needed')
+    } catch (error) {
+      console.error('AI analysis error:', error)
+      toast.error(error instanceof Error ? error.message : 'AI analysis failed — fill in manually')
+    } finally {
+      setIsAnalyzing(false)
+    }
   }
 
   const handleSubmit = async () => {
@@ -228,9 +333,37 @@ export function ObservationForm({
         )}
       </div>
 
+      {/* AI Analysis Button */}
+      {uploadedMedia.length > 0 && (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleAIAnalyze}
+          disabled={isAnalyzing || isUploading}
+          className="w-full border-dashed border-primary/50 text-primary hover:bg-primary/5"
+        >
+          {isAnalyzing ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              AI analyzing photo...
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4 mr-2" />
+              Analyze with AI
+            </>
+          )}
+        </Button>
+      )}
+
       {/* Status Selection */}
       <div className="space-y-3">
-        <Label className="text-base font-medium">Status</Label>
+        <div className="flex items-center gap-2">
+          <Label className="text-base font-medium">Status</Label>
+          {aiSuggested.has('status') && (
+            <Badge variant="secondary" className="text-xs font-normal">AI suggested</Badge>
+          )}
+        </div>
         <div className="flex flex-wrap gap-2">
           {STATUS_OPTIONS.map((option) => (
             <button
@@ -253,7 +386,12 @@ export function ObservationForm({
       {/* Severity Selection (only for deficient/maintenance) */}
       {showSeverity && (
         <div className="space-y-3">
-          <Label className="text-base font-medium">Severity</Label>
+          <div className="flex items-center gap-2">
+            <Label className="text-base font-medium">Severity</Label>
+            {aiSuggested.has('severity') && (
+              <Badge variant="secondary" className="text-xs font-normal">AI suggested</Badge>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             {SEVERITY_OPTIONS.map((option) => (
               <button
@@ -287,7 +425,12 @@ export function ObservationForm({
 
       {/* Inspector Notes */}
       <div className="space-y-2">
-        <Label htmlFor="notes">Notes (optional)</Label>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="notes">Notes (optional)</Label>
+          {aiSuggested.has('notes') && (
+            <Badge variant="secondary" className="text-xs font-normal">AI suggested</Badge>
+          )}
+        </div>
         <Textarea
           id="notes"
           placeholder="Additional observations or recommendations..."

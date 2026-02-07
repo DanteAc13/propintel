@@ -27,13 +27,15 @@ const NAV_BY_ROLE: Record<Role, { label: string; items: NavItem[] }> = {
     label: 'Homeowner',
     items: [
       { label: 'Dashboard', href: '/homeowner/dashboard', icon: LayoutDashboard },
-      { label: 'My Properties', href: '/homeowner/dashboard', icon: Home },
+      { label: 'My Properties', href: '/homeowner/properties', icon: Home },
+      { label: 'My Projects', href: '/homeowner/projects', icon: FolderOpen },
     ],
   },
   INSPECTOR: {
     label: 'Inspector',
     items: [
       { label: 'Dashboard', href: '/inspector/dashboard', icon: LayoutDashboard },
+      { label: 'Inspections', href: '/inspector/inspections', icon: ClipboardCheck },
     ],
   },
   CONTRACTOR: {
