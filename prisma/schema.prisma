@@ -1,0 +1,518 @@
+// Property Intelligence & Execution Platform
+// Prisma Schema — Source of Truth for All Data Models
+// 
+// Standards alignment:
+//   - CSI MasterFormat for trade mapping
+//   - InterNACHI/ASHI for observation enums and defect definitions
+//   - RESO Data Dictionary 2.0 for property field naming
+//
+// Convention: all tables use UUID primary keys, snake_case naming, 
+// and include created_at/updated_at timestamps.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum Role {
+  HOMEOWNER
+  INSPECTOR
+  CONTRACTOR
+  ADMIN
+}
+
+enum InspectionStatus {
+  SCHEDULED
+  IN_PROGRESS
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ObservationStatus {
+  DEFICIENT
+  FUNCTIONAL
+  NOT_INSPECTED
+  NOT_PRESENT
+  MAINTENANCE_NEEDED
+}
+
+enum ObservationSeverity {
+  SAFETY_HAZARD
+  MAJOR_DEFECT
+  MINOR_DEFECT
+  COSMETIC
+  INFORMATIONAL
+}
+
+enum Urgency {
+  IMMEDIATE
+  SHORT_TERM
+  LONG_TERM
+  MONITOR
+}
+
+enum IssueSeverity {
+  CRITICAL  // severity_score = 4
+  HIGH      // severity_score = 3
+  MEDIUM    // severity_score = 2
+  LOW       // severity_score = 1
+}
+
+enum ProjectStatus {
+  DRAFT
+  SCOPE_LOCKED
+  BIDDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum ProposalStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  OUTDATED
+}
+
+enum ContractorAccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum PropertyType {
+  SINGLE_FAMILY
+  CONDO
+  TOWNHOUSE
+  MULTI_FAMILY
+  MOBILE_HOME
+}
+
+// ============================================================
+// USER
+// ============================================================
+
+model User {
+  id             String   @id @default(uuid())
+  supabase_id    String   @unique // Links to Supabase Auth user
+  email          String   @unique
+  role           Role
+  first_name     String
+  last_name      String
+  phone          String?
+  avatar_url     String?
+  email_verified Boolean  @default(false)
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  // Relations
+  owned_properties        Property[]           @relation("PropertyOwner")
+  assigned_inspections    Inspection[]         @relation("InspectionInspector")
+  approved_inspections    Inspection[]         @relation("InspectionApprover")
+  owned_projects          Project[]            @relation("ProjectOwner")
+  contractor_profile      ContractorProfile?
+  proposals               Proposal[]
+  captured_media          Media[]              @relation("MediaInspector")
+  verified_contractors    ContractorProfile[]  @relation("ContractorVerifier")
+
+  @@map("users")
+}
+
+// ============================================================
+// PROPERTY
+// ============================================================
+
+model Property {
+  id              String       @id @default(uuid())
+  owner_id        String?      // Nullable for pre-assignment
+  address_line1   String
+  address_line2   String?
+  city            String
+  state           String       @default("FL") // Florida-first
+  zip_code        String
+  county          String?
+  latitude        Float?
+  longitude       Float?
+  year_built      Int?
+  square_footage  Int?
+  property_type   PropertyType @default(SINGLE_FAMILY)
+  bedrooms        Int?
+  bathrooms       Float?       // 2.5 baths
+  has_pool        Boolean      @default(false)
+  lot_size_sqft   Int?
+  stories         Int?
+  roof_type       String?      // Hook for insurance data
+  construction_type String?    // Hook for insurance data
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  // Relations
+  owner        User?        @relation("PropertyOwner", fields: [owner_id], references: [id])
+  inspections  Inspection[]
+  projects     Project[]
+  media        Media[]      @relation("PropertyMedia")
+
+  @@map("properties")
+}
+
+// ============================================================
+// INSPECTION
+// ============================================================
+
+model Inspection {
+  id             String           @id @default(uuid())
+  property_id    String
+  inspector_id   String?          // Nullable until assigned
+  status         InspectionStatus @default(SCHEDULED)
+  scheduled_date DateTime
+  started_at     DateTime?
+  completed_at   DateTime?
+  approved_at    DateTime?
+  approved_by_id String?
+  rejection_notes String?
+  notes          String?
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
+
+  // Relations
+  property    Property  @relation(fields: [property_id], references: [id])
+  inspector   User?     @relation("InspectionInspector", fields: [inspector_id], references: [id])
+  approved_by User?     @relation("InspectionApprover", fields: [approved_by_id], references: [id])
+  sections    Section[]
+  issues      Issue[]
+
+  @@map("inspections")
+}
+
+// ============================================================
+// SECTION TEMPLATE (Seed data — defines available sections)
+// ============================================================
+
+model SectionTemplate {
+  id                  String  @id @default(uuid())
+  name                String  @unique // "Roof", "Electrical", etc.
+  description         String
+  icon                String  @default("clipboard") // Lucide icon name
+  order_index         Int
+  default_components  Json    @default("[]") // String array of preset chip labels
+  is_active           Boolean @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  // Relations
+  sections           Section[]
+  defect_dictionary  DefectDictionary[]
+
+  @@map("section_templates")
+}
+
+// ============================================================
+// SECTION (Instance per inspection, from template)
+// ============================================================
+
+model Section {
+  id                String          @id @default(uuid())
+  inspection_id     String
+  template_id       String
+  order_index       Int
+  is_complete       Boolean         @default(false)
+  is_not_applicable Boolean         @default(false)
+  notes             String?
+  created_at        DateTime        @default(now())
+  updated_at        DateTime        @updatedAt
+
+  // Relations
+  inspection   Inspection      @relation(fields: [inspection_id], references: [id], onDelete: Cascade)
+  template     SectionTemplate @relation(fields: [template_id], references: [id])
+  observations Observation[]
+  media        Media[]         @relation("SectionMedia")
+
+  @@unique([inspection_id, template_id])
+  @@map("sections")
+}
+
+// ============================================================
+// OBSERVATION (Atomic unit of inspection)
+// ============================================================
+
+model Observation {
+  id               String              @id @default(uuid())
+  section_id       String
+  component        String              // "Shingles", "Outlets", "Water Heater"
+  description_raw  String?             // Inspector's actual text/voice input
+  status           ObservationStatus
+  severity         ObservationSeverity
+  urgency          Urgency             @default(MONITOR)
+  location_detail  String?             // "North slope", "Master bathroom"
+  inspector_notes  String?
+  order_index      Int                 @default(0)
+  created_at       DateTime            @default(now())
+  updated_at       DateTime            @updatedAt
+
+  // Relations
+  section Section @relation(fields: [section_id], references: [id], onDelete: Cascade)
+  media   Media[] @relation("ObservationMedia")
+  issues  Issue[]
+
+  @@map("observations")
+}
+
+// ============================================================
+// MEDIA
+// ============================================================
+
+model Media {
+  id               String   @id @default(uuid())
+  observation_id   String?
+  section_id       String?
+  property_id      String?
+  inspector_id     String
+  storage_url      String
+  thumbnail_url    String?
+  mime_type        String
+  file_size_bytes  Int
+  hash_sha256      String   // Integrity verification
+  capture_timestamp DateTime
+  latitude         Float?
+  longitude        Float?
+  device_id        String?
+  created_at       DateTime @default(now())
+
+  // Relations
+  observation Observation? @relation("ObservationMedia", fields: [observation_id], references: [id], onDelete: SetNull)
+  section     Section?     @relation("SectionMedia", fields: [section_id], references: [id], onDelete: SetNull)
+  property    Property?    @relation("PropertyMedia", fields: [property_id], references: [id], onDelete: SetNull)
+  inspector   User         @relation("MediaInspector", fields: [inspector_id], references: [id])
+
+  @@map("media")
+}
+
+// ============================================================
+// DEFECT DICTIONARY (Rules Engine lookup table — seed data)
+// ============================================================
+
+model DefectDictionary {
+  id                      String              @id @default(uuid())
+  section_template_id     String
+  component_match         String              // Match against observation.component
+  condition_match         ObservationStatus   // Match against observation.status
+  severity_match          ObservationSeverity? // Optional additional filter
+  normalized_title        String              // Output: "Asphalt Shingle Repair"
+  normalized_description  String              // Technical description
+  homeowner_description   String              // Plain English for homeowner view
+  master_format_code      String              // CSI code: "07-31-13"
+  trade_category          String              // "Roofing", "Plumbing", etc.
+  default_severity_score  Int                 // 1-4
+  risk_category           String?             // "Water Intrusion", "Fire Hazard"
+  is_safety_hazard        Boolean             @default(false)
+  insurance_relevant      Boolean             @default(false)
+  is_active               Boolean             @default(true)
+  created_at              DateTime            @default(now())
+  updated_at              DateTime            @updatedAt
+
+  // Relations
+  section_template SectionTemplate @relation(fields: [section_template_id], references: [id])
+
+  @@unique([section_template_id, component_match, condition_match])
+  @@map("defect_dictionary")
+}
+
+// ============================================================
+// ISSUE (System-generated from Rules Engine)
+// ============================================================
+
+model Issue {
+  id                     String       @id @default(uuid())
+  observation_id         String
+  inspection_id          String       // Denormalized for query performance
+  property_id            String       // Denormalized for query performance
+  normalized_title       String       // "Asphalt Shingle Repair"
+  normalized_description String       // Technical description
+  homeowner_description  String       // Plain English version
+  master_format_code     String?      // CSI code
+  trade_category         String       // "Roofing", "Plumbing", etc.
+  severity_score         Int          // 1-4
+  severity_label         IssueSeverity
+  risk_category          String?      // "Water Intrusion", "Fire Hazard"
+  urgency                Urgency
+  is_safety_hazard       Boolean      @default(false)
+  insurance_relevant     Boolean      @default(false)
+  // Phase 2 hooks (nullable)
+  ai_confidence_score    Float?       // Future: AI classification confidence
+  estimated_cost_low     Int?         // Future: cost estimation range
+  estimated_cost_high    Int?
+  permit_required        Boolean?     // Future: permit integration
+  created_at             DateTime     @default(now())
+  updated_at             DateTime     @updatedAt
+
+  // Relations
+  observation Observation @relation(fields: [observation_id], references: [id])
+  inspection  Inspection  @relation(fields: [inspection_id], references: [id])
+  scope_items ScopeItem[]
+
+  @@map("issues")
+}
+
+// ============================================================
+// PROJECT
+// ============================================================
+
+model Project {
+  id                    String        @id @default(uuid())
+  property_id           String
+  owner_id              String
+  title                 String
+  intent_summary        String?       // What the homeowner wants
+  intent_tags           String[]      @default([]) // ["roof_repair", "pre_purchase"]
+  status                ProjectStatus @default(DRAFT)
+  scope_locked_at       DateTime?
+  created_at            DateTime      @default(now())
+  updated_at            DateTime      @updatedAt
+
+  // Relations
+  property        Property        @relation(fields: [property_id], references: [id])
+  owner           User            @relation("ProjectOwner", fields: [owner_id], references: [id])
+  scope_items     ScopeItem[]
+  scope_snapshots ScopeSnapshot[]
+  proposals       Proposal[]
+
+  @@map("projects")
+}
+
+// ============================================================
+// SCOPE ITEM
+// ============================================================
+
+model ScopeItem {
+  id                 String   @id @default(uuid())
+  project_id         String
+  issue_id           String?  // Nullable for homeowner-added items
+  title              String
+  description        String
+  trade_category     String
+  master_format_code String?
+  is_homeowner_added Boolean  @default(false)
+  is_suppressed      Boolean  @default(false) // "Not Now" by homeowner
+  order_index        Int      @default(0)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  // Relations
+  project        Project        @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  issue          Issue?         @relation(fields: [issue_id], references: [id])
+  proposal_items ProposalItem[]
+
+  @@map("scope_items")
+}
+
+// ============================================================
+// SCOPE SNAPSHOT (Immutable scope version for bidding)
+// ============================================================
+
+model ScopeSnapshot {
+  id         String   @id @default(uuid())
+  project_id String
+  version    Int      // Auto-increment per project
+  locked_at  DateTime @default(now())
+  scope_data Json     // Frozen copy of all scope items
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+
+  // Relations
+  project   Project    @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  proposals Proposal[]
+
+  @@unique([project_id, version])
+  @@map("scope_snapshots")
+}
+
+// ============================================================
+// CONTRACTOR PROFILE
+// ============================================================
+
+model ContractorProfile {
+  id                   String                 @id @default(uuid())
+  user_id              String                 @unique
+  company_name         String
+  license_number       String?
+  license_image_url    String?
+  insurance_cert_url   String?
+  trade_categories     String[]               @default([]) // ["Roofing", "Siding"]
+  master_format_codes  String[]               @default([]) // CSI codes they service
+  service_radius_miles Int                    @default(50)
+  status               ContractorAccountStatus @default(PENDING)
+  bio                  String?
+  years_experience     Int?
+  verified_at          DateTime?
+  verified_by_id       String?
+  created_at           DateTime               @default(now())
+  updated_at           DateTime               @updatedAt
+
+  // Relations
+  user        User  @relation(fields: [user_id], references: [id])
+  verified_by User? @relation("ContractorVerifier", fields: [verified_by_id], references: [id])
+
+  @@map("contractor_profiles")
+}
+
+// ============================================================
+// PROPOSAL
+// ============================================================
+
+model Proposal {
+  id                    String         @id @default(uuid())
+  project_id            String
+  scope_snapshot_id     String
+  contractor_id         String
+  total_amount          Decimal        @db.Decimal(12, 2)
+  status                ProposalStatus @default(DRAFT)
+  notes                 String?
+  estimated_start_date  DateTime?
+  estimated_duration_days Int?
+  expires_at            DateTime
+  submitted_at          DateTime?
+  created_at            DateTime       @default(now())
+  updated_at            DateTime       @updatedAt
+
+  // Relations
+  project        Project       @relation(fields: [project_id], references: [id])
+  scope_snapshot ScopeSnapshot @relation(fields: [scope_snapshot_id], references: [id])
+  contractor     User          @relation(fields: [contractor_id], references: [id])
+  items          ProposalItem[]
+
+  @@unique([project_id, contractor_id, scope_snapshot_id]) // One proposal per contractor per snapshot
+  @@map("proposals")
+}
+
+// ============================================================
+// PROPOSAL ITEM (Line-item bid per scope item)
+// ============================================================
+
+model ProposalItem {
+  id             String  @id @default(uuid())
+  proposal_id    String
+  scope_item_id  String
+  line_item_cost Decimal @db.Decimal(12, 2)
+  notes          String?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  // Relations
+  proposal   Proposal  @relation(fields: [proposal_id], references: [id], onDelete: Cascade)
+  scope_item ScopeItem @relation(fields: [scope_item_id], references: [id])
+
+  @@unique([proposal_id, scope_item_id])
+  @@map("proposal_items")
+}
