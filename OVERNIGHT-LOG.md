@@ -40,4 +40,18 @@
 - Created MIT LICENSE file
 
 ### Task 4: Build & Push
-- Status: PENDING
+- Status: COMPLETE
+- `next build` passes clean — zero errors, all routes registered
+- Commit: `2a6d02b` — "feat: AI Vision analysis + nav fixes + README"
+- 9 files changed, 782 insertions(+), 24 deletions(-)
+- Pushed to origin/main successfully
+- No secrets in repo (confirmed previous session: .env* gitignored, only process.env refs in code)
+
+---
+
+## Final State
+- All 4 tasks complete
+- Build passes
+- ANTHROPIC_API_KEY is in .env (gitignored, not in repo)
+- New files: AI API route, 3 navigation pages, LICENSE, README, OVERNIGHT-LOG
+- Modified: DashboardShellWrapper (nav links), ObservationForm (AI integration)
