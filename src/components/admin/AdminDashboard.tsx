@@ -10,23 +10,33 @@ import {
   Users,
   FolderOpen,
   AlertTriangle,
+  BookOpen,
+  DollarSign,
 } from 'lucide-react'
 import { StatsCard } from './StatsCard'
+import { InviteHomeownerDialog } from './InviteHomeownerDialog'
 import type { AdminStats } from '@/types/admin'
 
 export function AdminDashboard() {
   const router = useRouter()
   const [stats, setStats] = useState<AdminStats | null>(null)
+  const [unmatchedCount, setUnmatchedCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchStats() {
       try {
-        const response = await fetch('/api/admin/stats')
-        if (!response.ok) throw new Error('Failed to fetch stats')
-        const data = await response.json()
-        setStats(data)
+        const [statsRes, unmatchedRes] = await Promise.all([
+          fetch('/api/admin/stats'),
+          fetch('/api/admin/unmatched-observations?count_only=true'),
+        ])
+        if (!statsRes.ok) throw new Error('Failed to fetch stats')
+        setStats(await statsRes.json())
+        if (unmatchedRes.ok) {
+          const unmatchedData = await unmatchedRes.json()
+          setUnmatchedCount(unmatchedData.count)
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred')
       } finally {
@@ -93,6 +103,15 @@ export function AdminDashboard() {
             color={stats.contractors.pendingVerification > 0 ? 'amber' : 'default'}
             onClick={() => router.push('/admin/contractors?status=PENDING')}
           />
+          {unmatchedCount > 0 && (
+            <StatsCard
+              title="Unmatched Observations"
+              value={unmatchedCount}
+              subtitle="Need manual issue creation"
+              icon={AlertTriangle}
+              color="red"
+            />
+          )}
         </div>
       </div>
 
@@ -131,28 +150,33 @@ export function AdminDashboard() {
         </div>
       </div>
 
+      {/* Quick actions */}
+      <div className="flex flex-wrap gap-3">
+        <InviteHomeownerDialog />
+      </div>
+
       {/* Quick links */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <button
           onClick={() => router.push('/admin/inspections')}
           className="p-4 bg-white border rounded-lg hover:bg-gray-50 text-center"
         >
           <ClipboardCheck className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-          <p className="text-sm font-medium text-gray-700">All Inspections</p>
+          <p className="text-sm font-medium text-gray-700">Inspections</p>
         </button>
         <button
           onClick={() => router.push('/admin/contractors')}
           className="p-4 bg-white border rounded-lg hover:bg-gray-50 text-center"
         >
           <UserCheck className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-          <p className="text-sm font-medium text-gray-700">All Contractors</p>
+          <p className="text-sm font-medium text-gray-700">Contractors</p>
         </button>
         <button
           onClick={() => router.push('/admin/users')}
           className="p-4 bg-white border rounded-lg hover:bg-gray-50 text-center"
         >
           <Users className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-          <p className="text-sm font-medium text-gray-700">User Management</p>
+          <p className="text-sm font-medium text-gray-700">Users</p>
         </button>
         <button
           onClick={() => router.push('/admin/users?role=INSPECTOR')}
@@ -160,6 +184,20 @@ export function AdminDashboard() {
         >
           <FileSearch className="h-6 w-6 mx-auto text-gray-400 mb-2" />
           <p className="text-sm font-medium text-gray-700">Inspectors</p>
+        </button>
+        <button
+          onClick={() => router.push('/admin/defect-dictionary')}
+          className="p-4 bg-white border rounded-lg hover:bg-gray-50 text-center"
+        >
+          <BookOpen className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+          <p className="text-sm font-medium text-gray-700">Defect Dictionary</p>
+        </button>
+        <button
+          onClick={() => router.push('/admin/pricing')}
+          className="p-4 bg-white border rounded-lg hover:bg-gray-50 text-center"
+        >
+          <DollarSign className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+          <p className="text-sm font-medium text-gray-700">Pricing</p>
         </button>
       </div>
     </div>

@@ -1,23 +1,11 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getCurrentUser } from '@/lib/auth'
+import { redirect, notFound } from 'next/navigation'
+import { InspectionQueue } from '@/components/admin/InspectionQueue'
 
-export default function AdminInspectionsPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Inspections</h1>
-        <p className="text-muted-foreground">
-          Manage all inspections in the system
-        </p>
-      </div>
+export default async function AdminInspectionsPage() {
+  const user = await getCurrentUser()
+  if (!user) redirect('/login')
+  if (user.role !== 'ADMIN') notFound()
 
-      <Card>
-        <CardHeader>
-          <CardTitle>All Inspections</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">Inspection list will be displayed here.</p>
-        </CardContent>
-      </Card>
-    </div>
-  )
+  return <InspectionQueue />
 }

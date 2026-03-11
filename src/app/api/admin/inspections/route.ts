@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // GET /api/admin/inspections - Get inspections for admin queues
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
     const { searchParams } = new URL(request.url)
     const queue = searchParams.get('queue') // 'assignment', 'review', or 'all'
     const status = searchParams.get('status')

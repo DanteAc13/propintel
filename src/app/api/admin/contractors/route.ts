@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // GET /api/admin/contractors - Get contractors for verification queue
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status') // 'PENDING', 'ACTIVE', 'SUSPENDED', 'REJECTED', or 'all'
     const limit = parseInt(searchParams.get('limit') ?? '50', 10)

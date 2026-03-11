@@ -127,6 +127,9 @@ model User {
   captured_media          Media[]              @relation("MediaInspector")
   verified_contractors    ContractorProfile[]  @relation("ContractorVerifier")
 
+  @@index([role])
+  @@index([is_active])
+  @@index([role, is_active])
   @@map("users")
 }
 
@@ -159,11 +162,12 @@ model Property {
   updated_at      DateTime     @updatedAt
 
   // Relations
-  owner        User?        @relation("PropertyOwner", fields: [owner_id], references: [id])
+  owner        User?        @relation("PropertyOwner", fields: [owner_id], references: [id], onDelete: SetNull)
   inspections  Inspection[]
   projects     Project[]
   media        Media[]      @relation("PropertyMedia")
 
+  @@index([owner_id])
   @@map("properties")
 }
 
@@ -193,6 +197,9 @@ model Inspection {
   sections    Section[]
   issues      Issue[]
 
+  @@index([status])
+  @@index([inspector_id])
+  @@index([status, inspector_id])
   @@map("inspections")
 }
 
@@ -235,11 +242,12 @@ model Section {
 
   // Relations
   inspection   Inspection      @relation(fields: [inspection_id], references: [id], onDelete: Cascade)
-  template     SectionTemplate @relation(fields: [template_id], references: [id])
+  template     SectionTemplate @relation(fields: [template_id], references: [id], onDelete: Restrict)
   observations Observation[]
   media        Media[]         @relation("SectionMedia")
 
   @@unique([inspection_id, template_id])
+  @@index([inspection_id])
   @@map("sections")
 }
 
@@ -266,6 +274,7 @@ model Observation {
   media   Media[] @relation("ObservationMedia")
   issues  Issue[]
 
+  @@index([section_id])
   @@map("observations")
 }
 
@@ -296,6 +305,9 @@ model Media {
   property    Property?    @relation("PropertyMedia", fields: [property_id], references: [id], onDelete: SetNull)
   inspector   User         @relation("MediaInspector", fields: [inspector_id], references: [id])
 
+  @@index([inspector_id])
+  @@index([property_id])
+  @@index([inspector_id, property_id])
   @@map("media")
 }
 
@@ -323,7 +335,7 @@ model DefectDictionary {
   updated_at              DateTime            @updatedAt
 
   // Relations
-  section_template SectionTemplate @relation(fields: [section_template_id], references: [id])
+  section_template SectionTemplate @relation(fields: [section_template_id], references: [id], onDelete: Restrict)
 
   @@unique([section_template_id, component_match, condition_match])
   @@map("defect_dictionary")
@@ -335,7 +347,7 @@ model DefectDictionary {
 
 model Issue {
   id                     String       @id @default(uuid())
-  observation_id         String
+  observation_id         String?      // Nullable: issue survives if observation deleted
   inspection_id          String       // Denormalized for query performance
   property_id            String       // Denormalized for query performance
   normalized_title       String       // "Asphalt Shingle Repair"
@@ -358,10 +370,12 @@ model Issue {
   updated_at             DateTime     @updatedAt
 
   // Relations
-  observation Observation @relation(fields: [observation_id], references: [id])
-  inspection  Inspection  @relation(fields: [inspection_id], references: [id])
+  observation Observation? @relation(fields: [observation_id], references: [id], onDelete: SetNull)
+  inspection  Inspection   @relation(fields: [inspection_id], references: [id])
   scope_items ScopeItem[]
 
+  @@index([property_id])
+  @@index([inspection_id])
   @@map("issues")
 }
 
@@ -388,6 +402,10 @@ model Project {
   scope_snapshots ScopeSnapshot[]
   proposals       Proposal[]
 
+  @@index([owner_id])
+  @@index([property_id])
+  @@index([status])
+  @@index([property_id, status])
   @@map("projects")
 }
 
@@ -411,9 +429,10 @@ model ScopeItem {
 
   // Relations
   project        Project        @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  issue          Issue?         @relation(fields: [issue_id], references: [id])
+  issue          Issue?         @relation(fields: [issue_id], references: [id], onDelete: SetNull)
   proposal_items ProposalItem[]
 
+  @@index([project_id])
   @@map("scope_items")
 }
 
@@ -435,6 +454,7 @@ model ScopeSnapshot {
   proposals Proposal[]
 
   @@unique([project_id, version])
+  @@index([project_id])
   @@map("scope_snapshots")
 }
 
@@ -464,6 +484,7 @@ model ContractorProfile {
   user        User  @relation(fields: [user_id], references: [id])
   verified_by User? @relation("ContractorVerifier", fields: [verified_by_id], references: [id])
 
+  @@index([status])
   @@map("contractor_profiles")
 }
 
@@ -493,6 +514,9 @@ model Proposal {
   items          ProposalItem[]
 
   @@unique([project_id, contractor_id, scope_snapshot_id]) // One proposal per contractor per snapshot
+  @@index([contractor_id])
+  @@index([status])
+  @@index([contractor_id, status])
   @@map("proposals")
 }
 

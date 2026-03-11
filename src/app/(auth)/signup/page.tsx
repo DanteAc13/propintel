@@ -4,7 +4,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Link from 'next/link'
 import { signup } from '../actions'
 import { useTransition, useState } from 'react'
@@ -14,10 +13,9 @@ import { Shield } from 'lucide-react'
 export default function SignupPage() {
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [role, setRole] = useState('HOMEOWNER')
 
   function handleSubmit(formData: FormData) {
-    formData.set('role', role)
+    formData.set('role', 'HOMEOWNER')
     setError(null)
     startTransition(async () => {
       const result = await signup(formData)
@@ -62,19 +60,6 @@ export default function SignupPage() {
                 disabled={isPending}
               />
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="role">I am a...</Label>
-            <Select value={role} onValueChange={setRole} disabled={isPending}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select your role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="HOMEOWNER">Homeowner</SelectItem>
-                <SelectItem value="INSPECTOR">Inspector</SelectItem>
-                <SelectItem value="CONTRACTOR">Contractor</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -8,6 +9,9 @@ type RouteParams = {
 // POST /api/projects/[id]/lock-scope - Lock the scope and create a snapshot for bidding
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
     // Get project with scope items
@@ -42,6 +46,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     })
 
     if (!project) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      )
+    }
+
+    // Verify ownership
+    if (project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Project not found' },
         { status: 404 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -9,6 +10,9 @@ type RouteParams = {
 // GET /api/projects/[id] - Get project with scope items
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
     const project = await db.project.findUnique({
@@ -94,6 +98,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       )
     }
 
+    // HOMEOWNER: verify ownership
+    if (auth.user.role === 'HOMEOWNER' && project.owner_id !== auth.user.id) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      )
+    }
+
     return NextResponse.json(project)
   } catch (error) {
     console.error('Error fetching project:', error)
@@ -113,6 +125,9 @@ const updateProjectSchema = z.object({
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
     const body = await request.json()
     const data = updateProjectSchema.parse(body)
@@ -120,10 +135,18 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // Check project exists and is editable
     const existing = await db.project.findUnique({
       where: { id },
-      select: { status: true },
+      select: { status: true, owner_id: true },
     })
 
     if (!existing) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      )
+    }
+
+    // HOMEOWNER: verify ownership
+    if (auth.user.role === 'HOMEOWNER' && existing.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Project not found' },
         { status: 404 }

@@ -4,7 +4,7 @@ import type { IssueSeverity } from '@prisma/client'
 /**
  * Convert numeric severity score to label
  */
-function severityScoreToLabel(score: number): IssueSeverity {
+export function severityScoreToLabel(score: number): IssueSeverity {
   switch (score) {
     case 4:
       return 'CRITICAL'

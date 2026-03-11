@@ -1,22 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // GET /api/contractor/projects - Get available projects matching contractor's trades
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('user_id')
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID required' },
-        { status: 400 }
-      )
-    }
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
 
     // Get contractor profile to find their trade categories
     const profile = await db.contractorProfile.findUnique({
-      where: { user_id: userId },
+      where: { user_id: user.id },
       select: {
         id: true,
         trade_categories: true,
@@ -41,6 +36,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Find projects in BIDDING status with scope items matching contractor's trades
+    // Post-query filtering by trade match makes DB-level pagination impractical,
+    // but we cap at 200 to prevent unbounded memory usage at scale.
     const projects = await db.project.findMany({
       where: {
         status: 'BIDDING',
@@ -72,46 +69,48 @@ export async function GET(request: NextRequest) {
           take: 1,
         },
         proposals: {
-          where: { contractor_id: userId },
+          where: { contractor_id: user.id },
           select: { id: true, status: true },
         },
       },
       orderBy: { scope_locked_at: 'desc' },
+      take: 200,
     })
 
-    // Filter projects that have scope items matching contractor's trades
-    // and contractor hasn't already submitted a proposal
-    const availableProjects = projects
-      .filter((project) => {
-        // Skip if contractor already has a non-draft proposal
-        const existingProposal = project.proposals[0]
-        if (existingProposal && existingProposal.status !== 'DRAFT') {
-          return false
-        }
+    // Filter + transform in a single pass
+    const availableProjects: Array<{
+      id: string
+      title: string
+      status: string
+      property: typeof projects[0]['property']
+      scope_locked_at: Date | null
+      matchingItemsCount: number
+      totalItemsCount: number
+      latestSnapshot: { id: string; version: number } | null
+      hasExistingDraft: boolean
+    }> = []
 
-        // Check if any scope items match contractor's trades
-        const matchingItems = project.scope_items.filter((item) =>
-          profile.trade_categories.includes(item.trade_category)
-        )
-        return matchingItems.length > 0
-      })
-      .map((project) => {
-        const matchingItems = project.scope_items.filter((item) =>
-          profile.trade_categories.includes(item.trade_category)
-        )
+    for (const project of projects) {
+      const existingProposal = project.proposals[0]
+      if (existingProposal && existingProposal.status !== 'DRAFT') continue
 
-        return {
-          id: project.id,
-          title: project.title,
-          status: project.status,
-          property: project.property,
-          scope_locked_at: project.scope_locked_at,
-          matchingItemsCount: matchingItems.length,
-          totalItemsCount: project.scope_items.length,
-          latestSnapshot: project.scope_snapshots[0] ?? null,
-          hasExistingDraft: project.proposals.some((p) => p.status === 'DRAFT'),
-        }
+      const matchingItems = project.scope_items.filter((item) =>
+        profile.trade_categories.includes(item.trade_category)
+      )
+      if (matchingItems.length === 0) continue
+
+      availableProjects.push({
+        id: project.id,
+        title: project.title,
+        status: project.status,
+        property: project.property,
+        scope_locked_at: project.scope_locked_at,
+        matchingItemsCount: matchingItems.length,
+        totalItemsCount: project.scope_items.length,
+        latestSnapshot: project.scope_snapshots[0] ?? null,
+        hasExistingDraft: project.proposals.some((p) => p.status === 'DRAFT'),
       })
+    }
 
     return NextResponse.json({
       projects: availableProjects,

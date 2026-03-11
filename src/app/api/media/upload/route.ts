@@ -1,25 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { createClient } from '@supabase/supabase-js'
-
-// Create admin Supabase client for storage operations
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { authenticateRequest } from '@/lib/api-auth'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 const BUCKET_NAME = 'inspection-media'
+
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+] as const
+
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10MB
 
 // POST /api/media/upload - Upload media file
 export async function POST(request: NextRequest) {
   try {
+    // --- Authentication & Authorization ---
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
-    const inspectorId = formData.get('inspector_id') as string
     const inspectionId = formData.get('inspection_id') as string
     const propertyId = formData.get('property_id') as string
     const sectionId = formData.get('section_id') as string | null
     const observationId = formData.get('observation_id') as string | null
+
+    // Use authenticated user's ID — never trust client-supplied inspector_id
+    const inspectorId = user.id
 
     if (!file) {
       return NextResponse.json(
@@ -28,9 +40,54 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!inspectorId || !inspectionId || !propertyId) {
+    if (!inspectionId || !propertyId) {
       return NextResponse.json(
-        { error: 'Missing required fields: inspector_id, inspection_id, property_id' },
+        { error: 'Missing required fields: inspection_id, property_id' },
+        { status: 400 }
+      )
+    }
+
+    // --- Verify inspector is assigned to this inspection ---
+    if (user.role === 'INSPECTOR') {
+      const inspection = await db.inspection.findUnique({
+        where: { id: inspectionId },
+        select: { inspector_id: true, property_id: true },
+      })
+
+      if (!inspection) {
+        return NextResponse.json(
+          { error: 'Inspection not found' },
+          { status: 404 }
+        )
+      }
+
+      if (inspection.inspector_id !== user.id) {
+        return NextResponse.json(
+          { error: 'Access denied' },
+          { status: 403 }
+        )
+      }
+
+      if (inspection.property_id !== propertyId) {
+        return NextResponse.json(
+          { error: 'Property does not match inspection' },
+          { status: 400 }
+        )
+      }
+    }
+
+    // --- File type validation ---
+    if (!ALLOWED_MIME_TYPES.includes(file.type as typeof ALLOWED_MIME_TYPES[number])) {
+      return NextResponse.json(
+        { error: `Invalid file type: ${file.type}. Allowed: ${ALLOWED_MIME_TYPES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    // --- File size validation ---
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        { error: `File too large: ${(file.size / (1024 * 1024)).toFixed(1)}MB. Maximum: 10MB` },
         { status: 400 }
       )
     }
@@ -73,23 +130,24 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get public URL
-    const { data: urlData } = supabaseAdmin.storage
+    // Store the object path — NOT a public URL.
+    // Signed URLs are minted on read to keep media private.
+    const { data: signedUrlData } = await supabaseAdmin.storage
       .from(BUCKET_NAME)
-      .getPublicUrl(storagePath)
+      .createSignedUrl(storagePath, 3600) // 1 hour expiry
 
-    // Create thumbnail URL using Supabase transforms
-    const thumbnailUrl = `${urlData.publicUrl}?width=300&height=300&resize=contain`
+    const signedUrl = signedUrlData?.signedUrl || ''
+    const thumbnailSignedUrl = signedUrl ? `${signedUrl}&width=300&height=300&resize=contain` : ''
 
-    // Create media record in database
+    // Create media record — storage_url holds the object path, not a public URL
     const media = await db.media.create({
       data: {
         inspector_id: inspectorId,
         observation_id: observationId || null,
         section_id: sectionId || null,
         property_id: propertyId,
-        storage_url: urlData.publicUrl,
-        thumbnail_url: thumbnailUrl,
+        storage_url: storagePath,
+        thumbnail_url: storagePath,
         mime_type: file.type,
         file_size_bytes: file.size,
         hash_sha256: hashHex,
@@ -97,8 +155,13 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // Return signed URLs for immediate display, but DB stores paths only
     return NextResponse.json({
-      media,
+      media: {
+        ...media,
+        storage_url: signedUrl,
+        thumbnail_url: thumbnailSignedUrl,
+      },
       storagePath,
     })
   } catch (error) {

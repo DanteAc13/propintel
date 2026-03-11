@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -8,6 +9,9 @@ type RouteParams = {
 // GET /api/projects/[id]/proposals - Get all proposals for a project (homeowner view)
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id: projectId } = await params
 
     // Get project to verify it exists
@@ -45,6 +49,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     })
 
     if (!project) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      )
+    }
+
+    // HOMEOWNER: verify ownership
+    if (auth.user.role === 'HOMEOWNER' && project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Project not found' },
         { status: 404 }

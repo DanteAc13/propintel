@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
 import { matchObservation, generateIssue } from '@/lib/rules-engine'
+import { authenticateRequest } from '@/lib/api-auth'
 
 const createObservationSchema = z.object({
   section_id: z.string().uuid(),
@@ -18,6 +19,9 @@ const createObservationSchema = z.object({
 // POST /api/observations - Create observation
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const body = await request.json()
     const data = createObservationSchema.parse(body)
 
@@ -35,6 +39,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Section not found' },
         { status: 404 }
+      )
+    }
+
+    // INSPECTOR: verify they own the inspection
+    if (auth.user.role === 'INSPECTOR' && section.inspection.inspector_id !== auth.user.id) {
+      return NextResponse.json(
+        { error: 'You do not have access to this inspection' },
+        { status: 403 }
       )
     }
 
@@ -59,10 +71,15 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Link existing media to this observation
+    // Link existing media to this observation — only if media belongs to same inspection
     if (data.media_ids && data.media_ids.length > 0) {
       await db.media.updateMany({
-        where: { id: { in: data.media_ids } },
+        where: {
+          id: { in: data.media_ids },
+          // Constrain to same inspector + property to prevent cross-inspection reassignment
+          inspector_id: auth.user.id,
+          property_id: section.inspection.property_id,
+        },
         data: { observation_id: observation.id },
       })
     }

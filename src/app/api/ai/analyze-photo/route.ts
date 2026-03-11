@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { authenticateRequest } from '@/lib/api-auth'
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 
@@ -14,6 +15,10 @@ type AIAnalysisResult = {
 
 export async function POST(request: NextRequest) {
   try {
+    // Authentication — only inspectors and admins can use AI analysis
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) {
       return NextResponse.json(
@@ -32,6 +37,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // File size limit — 10MB max
+    if (file.size > 10 * 1024 * 1024) {
+      return NextResponse.json(
+        { error: `File too large: ${(file.size / (1024 * 1024)).toFixed(1)}MB. Maximum: 10MB` },
+        { status: 400 }
+      )
+    }
+
     // Convert to base64
     const arrayBuffer = await file.arrayBuffer()
     const base64 = Buffer.from(arrayBuffer).toString('base64')
@@ -45,9 +58,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Call Anthropic API
+    // Call Anthropic API with 30s timeout
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
+
     const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -78,6 +95,8 @@ export async function POST(request: NextRequest) {
         ],
       }),
     })
+
+    clearTimeout(timeout)
 
     if (!response.ok) {
       const errorBody = await response.text()

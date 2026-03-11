@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -9,9 +10,11 @@ type RouteParams = {
 // GET /api/contractor/proposals/[id] - Get proposal detail
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const { id } = await params
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('user_id')
 
     const proposal = await db.proposal.findUnique({
       where: { id },
@@ -89,8 +92,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    // If user_id provided, verify ownership
-    if (userId && proposal.contractor_id !== userId) {
+    // CONTRACTOR role: enforce ownership
+    if (user.role === 'CONTRACTOR' && proposal.contractor_id !== user.id) {
       return NextResponse.json(
         { error: 'Access denied' },
         { status: 403 }
@@ -121,6 +124,10 @@ const updateProposalSchema = z.object({
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const { id } = await params
     const body = await request.json()
     const data = updateProposalSchema.parse(body)
@@ -135,6 +142,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json(
         { error: 'Proposal not found' },
         { status: 404 }
+      )
+    }
+
+    // CONTRACTOR role: enforce ownership
+    if (user.role === 'CONTRACTOR' && existing.contractor_id !== user.id) {
+      return NextResponse.json(
+        { error: 'Access denied' },
+        { status: 403 }
       )
     }
 

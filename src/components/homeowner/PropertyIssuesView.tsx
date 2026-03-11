@@ -5,12 +5,17 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   Loader2,
-  CheckCircle,
-  Home,
   ClipboardList,
+  Shield,
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  Paintbrush,
+  Printer,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { IssueCard } from './IssueCard'
 import { IssueSectionHeader } from './IssueSectionHeader'
 import type { PropertyIssuesResponse, IssueForHomeowner } from '@/types/homeowner'
@@ -92,16 +97,17 @@ export function PropertyIssuesView({ propertyId, userId }: PropertyIssuesViewPro
     const scopeItem = issue.scope_items?.[0]
 
     try {
+      let res: Response
       if (scopeItem) {
         // Update existing scope item
-        await fetch(`/api/scope-items/${scopeItem.id}`, {
+        res = await fetch(`/api/scope-items/${scopeItem.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ is_suppressed: !selected }),
         })
       } else if (selected) {
         // Create new scope item
-        await fetch('/api/scope-items', {
+        res = await fetch('/api/scope-items', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -113,7 +119,10 @@ export function PropertyIssuesView({ propertyId, userId }: PropertyIssuesViewPro
             master_format_code: issue.master_format_code,
           }),
         })
+      } else {
+        return
       }
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
     } catch (err) {
       console.error('Failed to update scope item:', err)
       // Revert selection on error
@@ -186,47 +195,87 @@ export function PropertyIssuesView({ propertyId, userId }: PropertyIssuesViewPro
 
   return (
     <div className="space-y-6">
-      {/* Back button */}
-      <button
-        onClick={() => router.push('/homeowner')}
-        className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to properties
-      </button>
+      {/* Back + Print buttons */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.push('/homeowner')}
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to properties
+        </button>
+        {hasIssues && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.open(`/homeowner/property/${propertyId}/report`, '_blank')}
+          >
+            <Printer className="h-4 w-4 mr-2" />
+            Print Report
+          </Button>
+        )}
+      </div>
 
-      {/* Property header */}
-      <div className="bg-white rounded-lg p-4 border">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-slate-100 rounded-lg">
-            <Home className="h-5 w-5 text-slate-600" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">
-              {property.address_line1}
-            </h1>
-            <p className="text-gray-500">
-              {property.city}, {property.state} {property.zip_code}
-            </p>
-            {inspectionDate && (
-              <p className="text-sm text-gray-400 mt-1">
-                Inspected {new Date(inspectionDate).toLocaleDateString()}
+      {/* Professional property header */}
+      <Card className="overflow-hidden">
+        <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-6 text-white">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-slate-300 text-sm font-medium uppercase tracking-wide mb-1">Property Assessment</p>
+              <h1 className="text-2xl font-bold">{property.address_line1}</h1>
+              <p className="text-slate-300 mt-1">
+                {property.city}, {property.state} {property.zip_code}
               </p>
-            )}
+            </div>
+            <div className="text-right">
+              {inspectionDate && (
+                <div>
+                  <p className="text-slate-400 text-xs uppercase tracking-wide">Inspected</p>
+                  <p className="text-white font-medium">
+                    {new Date(inspectionDate).toLocaleDateString('en-US', {
+                      year: 'numeric', month: 'long', day: 'numeric'
+                    })}
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+
+        {/* Severity summary bar */}
+        {hasIssues && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-gray-100">
+            {[
+              { key: 'safety' as const, icon: AlertTriangle, label: 'Safety', color: 'text-red-600', bg: 'bg-red-50' },
+              { key: 'major' as const, icon: AlertCircle, label: 'Major', color: 'text-orange-600', bg: 'bg-orange-50' },
+              { key: 'minor' as const, icon: Info, label: 'Minor', color: 'text-yellow-600', bg: 'bg-yellow-50' },
+              { key: 'cosmetic' as const, icon: Paintbrush, label: 'Cosmetic', color: 'text-blue-600', bg: 'bg-blue-50' },
+            ].map(({ key, icon: Icon, label, color, bg }) => (
+              <div key={key} className={`p-4 text-center ${grouped[key].length > 0 ? bg : ''}`}>
+                <Icon className={`h-5 w-5 mx-auto mb-1 ${grouped[key].length > 0 ? color : 'text-gray-300'}`} />
+                <p className={`text-2xl font-bold ${grouped[key].length > 0 ? color : 'text-gray-300'}`}>
+                  {grouped[key].length}
+                </p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* No issues state */}
       {!hasIssues && (
         <Card>
           <CardContent className="py-12 text-center">
-            <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">
-              Great news! No issues found
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
+              <Shield className="h-8 w-8 text-green-600" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900">
+              No Issues Found
             </h3>
-            <p className="text-gray-500 mt-1">
-              Your property passed the inspection with no deficiencies
+            <p className="text-gray-500 mt-2 max-w-md mx-auto">
+              Your property passed the inspection with no deficiencies noted.
+              This is a great sign for your home&apos;s condition.
             </p>
           </CardContent>
         </Card>
@@ -235,24 +284,30 @@ export function PropertyIssuesView({ propertyId, userId }: PropertyIssuesViewPro
       {/* Issues by severity */}
       {hasIssues && (
         <>
-          {/* Summary */}
+          {/* Action card */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Inspection Summary</CardTitle>
+              <CardTitle className="text-lg">What&apos;s Next?</CardTitle>
+              <CardDescription>
+                Review the findings below. Select which items you&apos;d like fixed,
+                then request quotes from qualified contractors.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-gray-600">
-                {totalIssues} issue{totalIssues !== 1 ? 's' : ''} found during inspection.
-                Select the items you want to fix, then proceed to get quotes from contractors.
-              </p>
-              <div className="flex items-center gap-3 mt-4">
-                <span className="text-sm text-gray-500">
-                  {selectedIssues.size} of {totalIssues} selected
-                </span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Badge variant="secondary" className="text-sm">
+                    {selectedIssues.size} of {totalIssues} selected
+                  </Badge>
+                  {grouped.safety.length > 0 && (
+                    <Badge variant="destructive" className="text-xs">
+                      {grouped.safety.length} safety item{grouped.safety.length > 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                </div>
                 {activeProject ? (
                   <Button
                     onClick={() => router.push(`/homeowner/projects/${activeProject.id}`)}
-                    className="ml-auto"
                   >
                     <ClipboardList className="h-4 w-4 mr-2" />
                     Review Scope
@@ -261,7 +316,6 @@ export function PropertyIssuesView({ propertyId, userId }: PropertyIssuesViewPro
                   <Button
                     onClick={handleStartProject}
                     disabled={selectedIssues.size === 0 || isSaving}
-                    className="ml-auto"
                   >
                     {isSaving ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />

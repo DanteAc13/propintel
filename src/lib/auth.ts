@@ -3,6 +3,7 @@
 //
 // Uses @supabase/ssr for cookie-based session management in Next.js App Router
 
+import { cache } from 'react'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { db } from './db'
@@ -48,7 +49,8 @@ export async function getSupabaseUser() {
 }
 
 // Get the current user from our database (with role information)
-export async function getCurrentUser() {
+// Wrapped with React cache() to deduplicate within a single server render pass
+export const getCurrentUser = cache(async () => {
   const supabaseUser = await getSupabaseUser()
 
   if (!supabaseUser) {
@@ -56,26 +58,11 @@ export async function getCurrentUser() {
   }
 
   const user = await db.user.findUnique({
-    where: { supabase_id: supabaseUser.id },
+    where: { supabase_id: supabaseUser.id, is_active: true },
   })
 
   return user
-}
-
-// Check if the current user has the required role
-export async function requireRole(allowedRoles: Role[]) {
-  const user = await getCurrentUser()
-
-  if (!user) {
-    return { authorized: false, user: null, reason: 'not_authenticated' as const }
-  }
-
-  if (!allowedRoles.includes(user.role)) {
-    return { authorized: false, user, reason: 'insufficient_permissions' as const }
-  }
-
-  return { authorized: true, user, reason: null }
-}
+})
 
 // Get redirect path based on user role
 export function getRoleRedirectPath(role: Role): string {

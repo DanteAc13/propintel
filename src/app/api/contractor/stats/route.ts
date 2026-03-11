@@ -1,22 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // GET /api/contractor/stats - Get contractor dashboard statistics
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('user_id')
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID required' },
-        { status: 400 }
-      )
-    }
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
 
     // Get contractor profile
     const profile = await db.contractorProfile.findUnique({
-      where: { user_id: userId },
+      where: { user_id: user.id },
       select: {
         id: true,
         trade_categories: true,
@@ -39,16 +34,16 @@ export async function GET(request: NextRequest) {
       totalProposals,
     ] = await Promise.all([
       db.proposal.count({
-        where: { contractor_id: userId, status: 'DRAFT' },
+        where: { contractor_id: user.id, status: 'DRAFT' },
       }),
       db.proposal.count({
-        where: { contractor_id: userId, status: 'SUBMITTED' },
+        where: { contractor_id: user.id, status: 'SUBMITTED' },
       }),
       db.proposal.count({
-        where: { contractor_id: userId, status: 'ACCEPTED' },
+        where: { contractor_id: user.id, status: 'ACCEPTED' },
       }),
       db.proposal.count({
-        where: { contractor_id: userId },
+        where: { contractor_id: user.id },
       }),
     ])
 
@@ -68,7 +63,7 @@ export async function GET(request: NextRequest) {
           },
           proposals: {
             where: {
-              contractor_id: userId,
+              contractor_id: user.id,
               status: { not: 'DRAFT' },
             },
             select: { id: true },

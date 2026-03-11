@@ -163,7 +163,7 @@ export default async function ContractorDashboard() {
                       ${Number(proposal.total_amount).toLocaleString()}
                     </span>
                     <Button variant="outline" size="sm" asChild>
-                      <Link href={`/contractor/proposal/${proposal.id}`}>View</Link>
+                      <Link href={`/contractor/proposals/${proposal.id}`}>View</Link>
                     </Button>
                   </CardContent>
                 </Card>

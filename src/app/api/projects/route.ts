@@ -1,60 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
+import { parsePagination, paginationMeta } from '@/lib/pagination'
 
 // GET /api/projects - Get projects for authenticated homeowner
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const ownerId = searchParams.get('owner_id')
-    const propertyId = searchParams.get('property_id')
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
 
-    if (!ownerId && !propertyId) {
-      return NextResponse.json(
-        { error: 'Owner ID or Property ID required' },
-        { status: 400 }
-      )
+    const { searchParams } = new URL(request.url)
+    const isAdmin = auth.user.role === 'ADMIN'
+
+    // HOMEOWNER: always scoped to own projects, ignore query params
+    // ADMIN: optional filters
+    const where: Record<string, unknown> = {}
+    if (isAdmin) {
+      const ownerId = searchParams.get('owner_id')
+      const propertyId = searchParams.get('property_id')
+      if (ownerId) where.owner_id = ownerId
+      if (propertyId) where.property_id = propertyId
+    } else {
+      where.owner_id = auth.user.id
     }
 
-    const projects = await db.project.findMany({
-      where: {
-        ...(ownerId && { owner_id: ownerId }),
-        ...(propertyId && { property_id: propertyId }),
-      },
-      include: {
-        property: {
-          select: {
-            id: true,
-            address_line1: true,
-            city: true,
-            state: true,
+    const { skip, take, page, limit } = parsePagination(searchParams)
+
+    const [projects, total] = await Promise.all([
+      db.project.findMany({
+        where,
+        include: {
+          property: {
+            select: {
+              id: true,
+              address_line1: true,
+              city: true,
+              state: true,
+            },
           },
-        },
-        scope_items: {
-          where: { is_suppressed: false },
-          include: {
-            issue: {
-              select: {
-                id: true,
-                normalized_title: true,
-                homeowner_description: true,
-                severity_label: true,
-                trade_category: true,
-              },
+          _count: {
+            select: {
+              proposals: true,
+              scope_items: true,
             },
           },
         },
-        _count: {
-          select: {
-            proposals: true,
-            scope_items: true,
-          },
-        },
-      },
-      orderBy: { created_at: 'desc' },
-    })
+        orderBy: { created_at: 'desc' },
+        skip,
+        take,
+      }),
+      db.project.count({ where }),
+    ])
 
-    return NextResponse.json(projects)
+    return NextResponse.json({
+      data: projects,
+      pagination: paginationMeta(total, page, limit),
+    })
   } catch (error) {
     console.error('Error fetching projects:', error)
     return NextResponse.json(
@@ -67,7 +69,6 @@ export async function GET(request: NextRequest) {
 // POST /api/projects - Create a new project for a property
 const createProjectSchema = z.object({
   property_id: z.string().uuid(),
-  owner_id: z.string().uuid(),
   title: z.string().min(1),
   intent_summary: z.string().optional(),
   intent_tags: z.array(z.string()).optional(),
@@ -75,14 +76,17 @@ const createProjectSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER'])
+    if (!auth.user) return auth.response
+
     const body = await request.json()
     const data = createProjectSchema.parse(body)
 
-    // Verify property exists and belongs to owner
+    // Verify property exists and belongs to the authenticated user
     const property = await db.property.findFirst({
       where: {
         id: data.property_id,
-        owner_id: data.owner_id,
+        owner_id: auth.user.id,
       },
     })
 
@@ -111,7 +115,7 @@ export async function POST(request: NextRequest) {
     const project = await db.project.create({
       data: {
         property_id: data.property_id,
-        owner_id: data.owner_id,
+        owner_id: auth.user.id,
         title: data.title,
         intent_summary: data.intent_summary,
         intent_tags: data.intent_tags ?? [],

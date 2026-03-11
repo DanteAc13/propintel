@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -9,6 +10,9 @@ type RouteParams = {
 // GET /api/admin/contractors/[id] - Get contractor profile details
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
     const contractor = await db.contractorProfile.findUnique({
@@ -79,12 +83,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PUT /api/admin/contractors/[id] - Verify, suspend, or update contractor
 const updateContractorSchema = z.object({
   action: z.enum(['approve', 'reject', 'suspend', 'reactivate']),
-  admin_id: z.string().uuid().optional(),
   rejection_reason: z.string().optional(),
 })
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const { id } = await params
     const body = await request.json()
     const data = updateContractorSchema.parse(body)
@@ -115,7 +122,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         updateData = {
           status: 'ACTIVE',
           verified_at: new Date(),
-          verified_by_id: data.admin_id,
+          verified_by_id: user.id,
         }
         break
 

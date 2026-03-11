@@ -1,23 +1,11 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getCurrentUser } from '@/lib/auth'
+import { redirect, notFound } from 'next/navigation'
+import { ContractorQueue } from '@/components/admin/ContractorQueue'
 
-export default function AdminContractorsPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Contractors</h1>
-        <p className="text-muted-foreground">
-          Manage contractor verification and profiles
-        </p>
-      </div>
+export default async function AdminContractorsPage() {
+  const user = await getCurrentUser()
+  if (!user) redirect('/login')
+  if (user.role !== 'ADMIN') notFound()
 
-      <Card>
-        <CardHeader>
-          <CardTitle>All Contractors</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">Contractor list will be displayed here.</p>
-        </CardContent>
-      </Card>
-    </div>
-  )
+  return <ContractorQueue />
 }

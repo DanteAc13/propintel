@@ -1,5 +1,6 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { db } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
 import { InspectionWorkspace } from '@/components/inspection/InspectionWorkspace'
 import type { InspectionWithProperty } from '@/types/inspection'
 
@@ -39,20 +40,33 @@ async function getInspection(id: string): Promise<InspectionWithProperty | null>
 
 export default async function InspectionPage({ params }: Props) {
   const { id } = await params
+
+  // Auth first — before loading any data
+  const currentUser = await getCurrentUser()
+  if (!currentUser) {
+    redirect('/login')
+  }
+
+  // Only inspectors and admins can access inspection workspace
+  if (currentUser.role !== 'INSPECTOR' && currentUser.role !== 'ADMIN') {
+    notFound()
+  }
+
   const inspection = await getInspection(id)
 
   if (!inspection) {
     notFound()
   }
 
-  // For now, we use a placeholder inspector ID
-  // In production, this comes from auth
-  const inspectorId = inspection.inspector?.id || 'dev-inspector'
+  // Inspectors can only access their own inspections
+  if (currentUser.role === 'INSPECTOR' && inspection.inspector_id !== currentUser.id) {
+    notFound()
+  }
 
   return (
     <InspectionWorkspace
       initialInspection={inspection}
-      inspectorId={inspectorId}
+      inspectorId={currentUser.id}
     />
   )
 }

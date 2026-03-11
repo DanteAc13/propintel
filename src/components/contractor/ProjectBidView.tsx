@@ -8,8 +8,6 @@ import {
   Loader2,
   MapPin,
   Home,
-  Calendar,
-  Clock,
   AlertTriangle,
   Send,
   Save,
@@ -245,7 +243,26 @@ export function ProjectBidView({ projectId, userId }: ProjectBidViewProps) {
         // If there's an existing draft proposal, load it
         if (data.existingProposal) {
           setExistingProposalId(data.existingProposal.id)
-          // TODO: Load existing proposal items
+          if (data.existingProposal.items) {
+            for (const pi of data.existingProposal.items) {
+              if (items[pi.scope_item_id]) {
+                items[pi.scope_item_id] = {
+                  scope_item_id: pi.scope_item_id,
+                  line_item_cost: Number(pi.line_item_cost),
+                  notes: pi.notes ?? '',
+                }
+              }
+            }
+          }
+          if (data.existingProposal.notes) {
+            setProposalNotes(data.existingProposal.notes)
+          }
+          if (data.existingProposal.estimated_start_date) {
+            setEstimatedStartDate(data.existingProposal.estimated_start_date.slice(0, 10))
+          }
+          if (data.existingProposal.estimated_duration_days) {
+            setEstimatedDuration(data.existingProposal.estimated_duration_days)
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred')

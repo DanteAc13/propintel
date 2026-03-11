@@ -14,9 +14,6 @@ import { Badge } from '@/components/ui/badge'
 import { PROPOSAL_STATUS_DISPLAY } from '@/types/contractor'
 import type { ProposalStatus } from '@prisma/client'
 
-// TODO: Get actual user ID from session
-const DEMO_USER_ID = 'demo-contractor-id'
-
 export default function ProposalDetailPage() {
   const router = useRouter()
   const params = useParams()
@@ -61,7 +58,7 @@ export default function ProposalDetailPage() {
     async function fetchProposal() {
       try {
         const response = await fetch(
-          `/api/contractor/proposals/${proposalId}?user_id=${DEMO_USER_ID}`
+          `/api/contractor/proposals/${proposalId}`
         )
         if (!response.ok) throw new Error('Failed to fetch proposal')
         const data = await response.json()

@@ -1,13 +1,15 @@
 import { ContractorProfile } from '@/components/contractor/ContractorProfile'
+import { getCurrentUser } from '@/lib/auth'
+import { redirect } from 'next/navigation'
 
-// TODO: Get actual user ID from session
-const DEMO_USER_ID = 'demo-contractor-id'
+export default async function ContractorProfilePage() {
+  const user = await getCurrentUser()
+  if (!user) redirect('/login')
 
-export default function ContractorProfilePage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 py-6">
-        <ContractorProfile userId={DEMO_USER_ID} />
+        <ContractorProfile userId={user.id} />
       </div>
     </div>
   )

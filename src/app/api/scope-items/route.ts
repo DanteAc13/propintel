@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // POST /api/scope-items - Create a scope item (from issue or homeowner-added)
 const createScopeItemSchema = z.object({
@@ -15,16 +16,27 @@ const createScopeItemSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const body = await request.json()
     const data = createScopeItemSchema.parse(body)
 
     // Verify project exists and is in DRAFT status
     const project = await db.project.findUnique({
       where: { id: data.project_id },
-      select: { id: true, status: true },
+      select: { id: true, status: true, owner_id: true },
     })
 
     if (!project) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      )
+    }
+
+    // HOMEOWNER: verify ownership of the project
+    if (auth.user.role === 'HOMEOWNER' && project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Project not found' },
         { status: 404 }

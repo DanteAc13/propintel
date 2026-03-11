@@ -37,6 +37,7 @@ import type {
   AvailableInspector,
 } from '@/types/admin'
 import { INSPECTION_STATUS_DISPLAY } from '@/types/admin'
+import { ScheduleInspectionDialog } from './ScheduleInspectionDialog'
 
 type QueueType = 'assignment' | 'review' | 'all'
 
@@ -49,6 +50,8 @@ export function InspectionQueue() {
   const [data, setData] = useState<InspectionQueueResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Action dialogs
   const [assignDialog, setAssignDialog] = useState<{
@@ -78,7 +81,7 @@ export function InspectionQueue() {
     }
 
     fetchInspections()
-  }, [queue])
+  }, [queue, refreshKey])
 
   const handleAssign = async () => {
     if (!assignDialog) return
@@ -168,23 +171,26 @@ export function InspectionQueue() {
       </button>
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Inspections</h1>
           <p className="text-gray-500 mt-1">
             {data?.total ?? 0} inspection{data?.total !== 1 ? 's' : ''}
           </p>
         </div>
-        <Select value={queue} onValueChange={(v) => setQueue(v as QueueType)}>
-          <SelectTrigger className="w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Inspections</SelectItem>
-            <SelectItem value="assignment">Needs Assignment</SelectItem>
-            <SelectItem value="review">Needs Review</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <ScheduleInspectionDialog onInspectionCreated={() => setRefreshKey((k) => k + 1)} />
+          <Select value={queue} onValueChange={(v) => setQueue(v as QueueType)}>
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Inspections</SelectItem>
+              <SelectItem value="assignment">Needs Assignment</SelectItem>
+              <SelectItem value="review">Needs Review</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {error && (

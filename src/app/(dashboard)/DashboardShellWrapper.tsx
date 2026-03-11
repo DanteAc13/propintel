@@ -1,6 +1,7 @@
 'use client'
 
 import { DashboardShell } from '@/components/shared/DashboardShell'
+import { FeedbackWidget } from '@/components/shared/FeedbackWidget'
 import type { Role } from '@prisma/client'
 import {
   LayoutDashboard,
@@ -8,11 +9,10 @@ import {
   FolderOpen,
   ClipboardCheck,
   Users,
-  ShieldCheck,
   HardHat,
-  FileText,
   UserCircle,
-  Settings,
+  BookOpen,
+  DollarSign,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -52,6 +52,8 @@ const NAV_BY_ROLE: Record<Role, { label: string; items: NavItem[] }> = {
       { label: 'Inspections', href: '/admin/inspections', icon: ClipboardCheck },
       { label: 'Contractors', href: '/admin/contractors', icon: HardHat },
       { label: 'Users', href: '/admin/users', icon: Users },
+      { label: 'Defect Dictionary', href: '/admin/defect-dictionary', icon: BookOpen },
+      { label: 'Pricing Insights', href: '/admin/pricing', icon: DollarSign },
     ],
   },
 }
@@ -77,6 +79,7 @@ export function DashboardShellWrapper({
       userEmail={userEmail}
     >
       {children}
+      <FeedbackWidget />
     </DashboardShell>
   )
 }

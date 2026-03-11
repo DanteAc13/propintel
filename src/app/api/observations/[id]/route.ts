@@ -2,29 +2,53 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
 import { matchObservation, generateIssue } from '@/lib/rules-engine'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
 }
 
+/** Fetch observation with inspection ownership chain. Returns null if not found. */
+async function fetchObservationWithOwnership(id: string) {
+  return db.observation.findUnique({
+    where: { id },
+    include: {
+      media: true,
+      section: {
+        include: {
+          template: true,
+          inspection: true,
+        },
+      },
+      issues: true,
+    },
+  })
+}
+
+/** Return 403 if INSPECTOR does not own the inspection. */
+function checkInspectorOwnership(
+  role: string,
+  userId: string,
+  inspectorId: string | null
+): NextResponse | null {
+  if (role === 'INSPECTOR' && inspectorId !== userId) {
+    return NextResponse.json(
+      { error: 'You do not have access to this observation' },
+      { status: 403 }
+    )
+  }
+  return null
+}
+
 // GET /api/observations/[id] - Get observation with media
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
-    const observation = await db.observation.findUnique({
-      where: { id },
-      include: {
-        media: true,
-        section: {
-          include: {
-            template: true,
-            inspection: true,
-          },
-        },
-        issues: true,
-      },
-    })
+    const observation = await fetchObservationWithOwnership(id)
 
     if (!observation) {
       return NextResponse.json(
@@ -32,6 +56,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         { status: 404 }
       )
     }
+
+    const forbidden = checkInspectorOwnership(
+      auth.user.role,
+      auth.user.id,
+      observation.section.inspection.inspector_id
+    )
+    if (forbidden) return forbidden
 
     return NextResponse.json(observation)
   } catch (error) {
@@ -56,23 +87,15 @@ const updateObservationSchema = z.object({
 // PUT /api/observations/[id] - Update observation
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
     const body = await request.json()
     const data = updateObservationSchema.parse(body)
 
     // Get current observation with section info
-    const currentObs = await db.observation.findUnique({
-      where: { id },
-      include: {
-        section: {
-          include: {
-            template: true,
-            inspection: true,
-          },
-        },
-        issues: true,
-      },
-    })
+    const currentObs = await fetchObservationWithOwnership(id)
 
     if (!currentObs) {
       return NextResponse.json(
@@ -80,6 +103,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         { status: 404 }
       )
     }
+
+    const forbidden = checkInspectorOwnership(
+      auth.user.role,
+      auth.user.id,
+      currentObs.section.inspection.inspector_id
+    )
+    if (forbidden) return forbidden
 
     // Update observation
     const observation = await db.observation.update({
@@ -140,7 +170,39 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/observations/[id] - Delete observation
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
+
+    // Light query — only need ownership chain, not media/issues
+    const observation = await db.observation.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        section: {
+          select: {
+            inspection: {
+              select: { inspector_id: true },
+            },
+          },
+        },
+      },
+    })
+
+    if (!observation) {
+      return NextResponse.json(
+        { error: 'Observation not found' },
+        { status: 404 }
+      )
+    }
+
+    const forbidden = checkInspectorOwnership(
+      auth.user.role,
+      auth.user.id,
+      observation.section.inspection.inspector_id
+    )
+    if (forbidden) return forbidden
 
     // Delete associated issues first
     await db.issue.deleteMany({

@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // GET /api/admin/stats - Get admin dashboard overview statistics
 export async function GET() {
   try {
-    // TODO: Verify admin role from authenticated user
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
 
     // Run all stat queries in parallel
     const [

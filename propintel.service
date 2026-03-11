@@ -1,0 +1,23 @@
+[Unit]
+Description=PropIntel — Property Intelligence Platform
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+WorkingDirectory=/home/molduser/propintel
+Environment=NODE_ENV=production
+Environment=PORT=3100
+Environment=HOSTNAME=172.17.0.1
+Environment=PATH=/home/molduser/.nvm/versions/node/v24.13.0/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/home/molduser/propintel/.env
+ExecStart=/home/molduser/.nvm/versions/node/v24.13.0/bin/node node_modules/.bin/next start -H 172.17.0.1 -p 3100
+Restart=on-failure
+RestartSec=15
+MemoryHigh=384M
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

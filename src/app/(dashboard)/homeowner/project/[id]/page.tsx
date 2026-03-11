@@ -1,27 +1,31 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getCurrentUser } from '@/lib/auth'
+import { redirect, notFound } from 'next/navigation'
+import { db } from '@/lib/db'
+import { ScopeReview } from '@/components/homeowner/ScopeReview'
 
 type Props = {
   params: Promise<{ id: string }>
 }
 
 export default async function ProjectPage({ params }: Props) {
+  const user = await getCurrentUser()
+  if (!user) redirect('/login')
+  if (user.role !== 'HOMEOWNER' && user.role !== 'ADMIN') notFound()
+
   const { id } = await params
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Project Details</h1>
-        <p className="text-muted-foreground">Project ID: {id}</p>
-      </div>
+  // Verify project exists and belongs to user
+  const project = await db.project.findUnique({
+    where: { id },
+    select: { id: true, owner_id: true },
+  })
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Project Scope</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">Project scope items will be displayed here.</p>
-        </CardContent>
-      </Card>
+  if (!project) notFound()
+  if (user.role === 'HOMEOWNER' && project.owner_id !== user.id) notFound()
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      <ScopeReview projectId={id} />
     </div>
   )
 }

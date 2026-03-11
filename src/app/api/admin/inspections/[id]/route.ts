@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
+import { sendEmail, getAppUrl } from '@/lib/email'
+import { assessmentReadyEmail, inspectorAssignedEmail } from '@/lib/email-templates'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -9,6 +12,9 @@ type RouteParams = {
 // GET /api/admin/inspections/[id] - Get inspection details for admin review
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
     const inspection = await db.inspection.findUnique({
@@ -85,12 +91,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 const updateInspectionSchema = z.object({
   action: z.enum(['assign', 'approve', 'reject']),
   inspector_id: z.string().uuid().optional(),
-  admin_id: z.string().uuid().optional(), // For approval tracking
   rejection_notes: z.string().optional(),
 })
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const { id } = await params
     const body = await request.json()
     const data = updateInspectionSchema.parse(body)
@@ -148,7 +157,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         updateData = {
           status: 'APPROVED',
           approved_at: new Date(),
-          approved_by_id: data.admin_id,
+          approved_by_id: user.id,
         }
         break
 
@@ -172,6 +181,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         break
     }
 
+    const isApproval = data.action === 'approve'
+
     const updated = await db.inspection.update({
       where: { id },
       data: updateData,
@@ -182,6 +193,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             address_line1: true,
             city: true,
             state: true,
+            ...(isApproval && { owner: { select: { email: true, first_name: true } } }),
           },
         },
         inspector: {
@@ -192,8 +204,57 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             email: true,
           },
         },
+        ...(isApproval && { issues: { select: { id: true, is_safety_hazard: true } } }),
       },
     })
+
+    // Notify inspector when assigned
+    if (data.action === 'assign' && updated.inspector?.email) {
+      void (async () => {
+        try {
+          const prop = updated.property
+          const address = `${prop.address_line1}, ${prop.city} ${prop.state}`
+          const appUrl = getAppUrl()
+          const template = inspectorAssignedEmail({
+            inspectorFirstName: updated.inspector!.first_name,
+            propertyAddress: address,
+            scheduledDate: new Date(updated.scheduled_date).toLocaleDateString('en-US', {
+              year: 'numeric', month: 'long', day: 'numeric',
+            }),
+            viewLink: `${appUrl}/inspector/inspection/${updated.id}`,
+          })
+          await sendEmail({ to: updated.inspector!.email, ...template })
+        } catch (emailErr) {
+          console.error('[notify] Inspector assigned email failed:', emailErr)
+        }
+      })()
+    }
+
+    // Send assessment-ready notification when approved
+    if (isApproval) {
+      const owner = (updated.property as { owner?: { email: string; first_name: string } }).owner
+      const issues = (updated as { issues?: { id: string; is_safety_hazard: boolean }[] }).issues ?? []
+      if (owner?.email) {
+        // Fire-and-forget — don't block the response
+        void (async () => {
+          try {
+            const prop = updated.property
+            const address = `${prop.address_line1}, ${prop.city} ${prop.state}`
+            const appUrl = getAppUrl()
+            const template = assessmentReadyEmail({
+              firstName: owner.first_name,
+              propertyAddress: address,
+              issueCount: issues.length,
+              safetyCount: issues.filter(i => i.is_safety_hazard).length,
+              viewLink: `${appUrl}/homeowner/property/${prop.id}`,
+            })
+            await sendEmail({ to: owner.email, ...template })
+          } catch (emailErr) {
+            console.error('[notify] Assessment ready email failed:', emailErr)
+          }
+        })()
+      }
+    }
 
     return NextResponse.json({
       message: `Inspection ${data.action}${data.action === 'assign' ? 'ed' : data.action === 'approve' ? 'd' : 'ed'} successfully`,

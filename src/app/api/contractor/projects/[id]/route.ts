@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -8,20 +9,15 @@ type RouteParams = {
 // GET /api/contractor/projects/[id] - Get project detail with scope items filtered by contractor's trades
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const { id: projectId } = await params
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('user_id')
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID required' },
-        { status: 400 }
-      )
-    }
+    const { id: projectId } = await params
 
     // Get contractor profile
     const profile = await db.contractorProfile.findUnique({
-      where: { user_id: userId },
+      where: { user_id: user.id },
       select: {
         id: true,
         trade_categories: true,
@@ -103,11 +99,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           take: 1,
         },
         proposals: {
-          where: { contractor_id: userId },
+          where: { contractor_id: user.id },
           select: {
             id: true,
             status: true,
             total_amount: true,
+            notes: true,
+            estimated_start_date: true,
+            estimated_duration_days: true,
+            items: {
+              select: {
+                scope_item_id: true,
+                line_item_cost: true,
+                notes: true,
+              },
+            },
           },
           take: 1,
         },

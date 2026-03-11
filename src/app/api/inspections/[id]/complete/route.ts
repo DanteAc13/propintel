@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -8,6 +9,10 @@ type RouteParams = {
 // POST /api/inspections/[id]/complete - Complete inspection (submit for review)
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['INSPECTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const { id } = await params
 
     // Get the inspection with sections
@@ -28,6 +33,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: 404 }
       )
     }
+
+    // Ownership check
+    if (user.role === 'INSPECTOR' && inspection.inspector_id !== user.id) {
+      return NextResponse.json(
+        { error: 'Access denied' },
+        { status: 403 }
+      )
+    }
+    // ADMIN passes through
 
     if (inspection.status !== 'IN_PROGRESS') {
       return NextResponse.json(

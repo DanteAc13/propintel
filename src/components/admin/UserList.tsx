@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { UserListResponse, UserForAdmin } from '@/types/admin'
+import { CreateUserDialog } from './CreateUserDialog'
 
 type RoleFilter = 'all' | 'HOMEOWNER' | 'INSPECTOR' | 'CONTRACTOR' | 'ADMIN'
 
@@ -44,6 +45,7 @@ export function UserList() {
   const [data, setData] = useState<UserListResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     async function fetchUsers() {
@@ -66,7 +68,7 @@ export function UserList() {
 
     const debounce = setTimeout(fetchUsers, 300)
     return () => clearTimeout(debounce)
-  }, [role, search])
+  }, [role, search, refreshKey])
 
   const formatDate = (date: Date | string) => {
     return new Date(date).toLocaleDateString('en-US', {
@@ -88,11 +90,14 @@ export function UserList() {
       </button>
 
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-        <p className="text-gray-500 mt-1">
-          {data?.total ?? 0} user{data?.total !== 1 ? 's' : ''}
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
+          <p className="text-gray-500 mt-1">
+            {data?.total ?? 0} user{data?.total !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <CreateUserDialog onUserCreated={() => setRefreshKey((k) => k + 1)} />
       </div>
 
       {/* Filters */}

@@ -1,47 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
+import { parsePagination, paginationMeta } from '@/lib/pagination'
 
 // GET /api/contractor/proposals - Get contractor's proposals
 export async function GET(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('user_id')
     const status = searchParams.get('status')
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID required' },
-        { status: 400 }
-      )
+    const where = {
+      contractor_id: user.id,
+      ...(status && { status: status as 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'OUTDATED' }),
     }
 
-    const proposals = await db.proposal.findMany({
-      where: {
-        contractor_id: userId,
-        ...(status && { status: status as 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'OUTDATED' }),
-      },
-      include: {
-        project: {
-          select: {
-            id: true,
-            title: true,
-            status: true,
-            property: {
-              select: {
-                address_line1: true,
-                city: true,
-                state: true,
+    const { skip, take, page, limit } = parsePagination(searchParams)
+
+    const [proposals, total] = await Promise.all([
+      db.proposal.findMany({
+        where,
+        include: {
+          project: {
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              property: {
+                select: {
+                  address_line1: true,
+                  city: true,
+                  state: true,
+                },
               },
             },
           },
+          _count: {
+            select: { items: true },
+          },
         },
-        _count: {
-          select: { items: true },
-        },
-      },
-      orderBy: { updated_at: 'desc' },
-    })
+        orderBy: { updated_at: 'desc' },
+        skip,
+        take,
+      }),
+      db.proposal.count({ where }),
+    ])
 
     const proposalList = proposals.map((p) => ({
       id: p.id,
@@ -53,7 +61,10 @@ export async function GET(request: NextRequest) {
       itemCount: p._count.items,
     }))
 
-    return NextResponse.json(proposalList)
+    return NextResponse.json({
+      data: proposalList,
+      pagination: paginationMeta(total, page, limit),
+    })
   } catch (error) {
     console.error('Error fetching proposals:', error)
     return NextResponse.json(
@@ -67,7 +78,6 @@ export async function GET(request: NextRequest) {
 const createProposalSchema = z.object({
   project_id: z.string().uuid(),
   scope_snapshot_id: z.string().uuid(),
-  contractor_id: z.string().uuid(),
   items: z.array(z.object({
     scope_item_id: z.string().uuid(),
     line_item_cost: z.number().min(0),
@@ -80,14 +90,31 @@ const createProposalSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const body = await request.json()
     const data = createProposalSchema.parse(body)
 
-    // Verify contractor is active
-    const profile = await db.contractorProfile.findUnique({
-      where: { user_id: data.contractor_id },
-      select: { status: true },
-    })
+    // Validate contractor, project, and duplicate check in parallel
+    const [profile, project, existing] = await Promise.all([
+      db.contractorProfile.findUnique({
+        where: { user_id: user.id },
+        select: { status: true },
+      }),
+      db.project.findUnique({
+        where: { id: data.project_id },
+        select: { status: true },
+      }),
+      db.proposal.findFirst({
+        where: {
+          project_id: data.project_id,
+          contractor_id: user.id,
+          scope_snapshot_id: data.scope_snapshot_id,
+        },
+      }),
+    ])
 
     if (!profile || profile.status !== 'ACTIVE') {
       return NextResponse.json(
@@ -96,12 +123,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify project is in BIDDING status
-    const project = await db.project.findUnique({
-      where: { id: data.project_id },
-      select: { status: true },
-    })
-
     if (!project || project.status !== 'BIDDING') {
       return NextResponse.json(
         { error: 'Project is not open for bidding' },
@@ -109,19 +130,46 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check for existing proposal
-    const existing = await db.proposal.findFirst({
-      where: {
-        project_id: data.project_id,
-        contractor_id: data.contractor_id,
-        scope_snapshot_id: data.scope_snapshot_id,
-      },
-    })
-
     if (existing) {
       return NextResponse.json(
         { error: 'You already have a proposal for this project', proposalId: existing.id },
         { status: 409 }
+      )
+    }
+
+    // Verify scope_snapshot belongs to this project
+    const snapshot = await db.scopeSnapshot.findUnique({
+      where: { id: data.scope_snapshot_id },
+      select: { project_id: true, is_active: true },
+    })
+
+    if (!snapshot || snapshot.project_id !== data.project_id) {
+      return NextResponse.json(
+        { error: 'Invalid scope snapshot for this project' },
+        { status: 400 }
+      )
+    }
+
+    if (!snapshot.is_active) {
+      return NextResponse.json(
+        { error: 'Scope snapshot is no longer active' },
+        { status: 400 }
+      )
+    }
+
+    // Verify all scope_item_ids belong to this project
+    const scopeItemIds = data.items.map(i => i.scope_item_id)
+    const validScopeItems = await db.scopeItem.findMany({
+      where: { id: { in: scopeItemIds }, project_id: data.project_id, is_suppressed: false },
+      select: { id: true },
+    })
+    const validIds = new Set(validScopeItems.map(s => s.id))
+    const invalidIds = scopeItemIds.filter(id => !validIds.has(id))
+
+    if (invalidIds.length > 0) {
+      return NextResponse.json(
+        { error: 'One or more scope items do not belong to this project' },
+        { status: 400 }
       )
     }
 
@@ -138,7 +186,7 @@ export async function POST(request: NextRequest) {
         data: {
           project_id: data.project_id,
           scope_snapshot_id: data.scope_snapshot_id,
-          contractor_id: data.contractor_id,
+          contractor_id: user.id,
           total_amount: totalAmount,
           status: 'DRAFT',
           notes: data.notes,
@@ -170,6 +218,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Invalid request data', details: error.issues },
         { status: 400 }
+      )
+    }
+    // Catch unique constraint violation (race: duplicate proposal created between check and insert)
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return NextResponse.json(
+        { error: 'You already have a proposal for this project' },
+        { status: 409 }
       )
     }
     return NextResponse.json(

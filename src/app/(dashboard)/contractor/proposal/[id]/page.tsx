@@ -1,29 +1,14 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { redirect, notFound } from 'next/navigation'
 
 type Props = {
   params: Promise<{ id: string }>
 }
 
-export default async function ProposalPage({ params }: Props) {
+const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/
+
+// Redirect singular /contractor/proposal/[id] → plural /contractor/proposals/[id]
+export default async function ContractorProposalRedirect({ params }: Props) {
   const { id } = await params
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Proposal</h1>
-        <p className="text-muted-foreground">Proposal ID: {id}</p>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Line Items</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            Proposal line items and pricing will be displayed here.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  )
+  if (!UUID_RE.test(id)) notFound()
+  redirect(`/contractor/proposals/${id}`)
 }

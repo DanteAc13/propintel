@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -9,6 +10,9 @@ type RouteParams = {
 // GET /api/scope-items/[id] - Get a single scope item
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
     const scopeItem = await db.scopeItem.findUnique({
@@ -41,12 +45,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             id: true,
             status: true,
             title: true,
+            owner_id: true,
           },
         },
       },
     })
 
     if (!scopeItem) {
+      return NextResponse.json(
+        { error: 'Scope item not found' },
+        { status: 404 }
+      )
+    }
+
+    // HOMEOWNER: verify ownership via the project
+    if (auth.user.role === 'HOMEOWNER' && scopeItem.project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Scope item not found' },
         { status: 404 }
@@ -73,6 +86,9 @@ const updateScopeItemSchema = z.object({
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
     const body = await request.json()
     const data = updateScopeItemSchema.parse(body)
@@ -82,12 +98,20 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       where: { id },
       include: {
         project: {
-          select: { status: true },
+          select: { status: true, owner_id: true },
         },
       },
     })
 
     if (!existing) {
+      return NextResponse.json(
+        { error: 'Scope item not found' },
+        { status: 404 }
+      )
+    }
+
+    // HOMEOWNER: verify ownership via the project
+    if (auth.user.role === 'HOMEOWNER' && existing.project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Scope item not found' },
         { status: 404 }
@@ -136,18 +160,29 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 // DELETE /api/scope-items/[id] - Remove scope item (only homeowner-added items)
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER', 'ADMIN'])
+    if (!auth.user) return auth.response
+
     const { id } = await params
 
     const existing = await db.scopeItem.findUnique({
       where: { id },
       include: {
         project: {
-          select: { status: true },
+          select: { status: true, owner_id: true },
         },
       },
     })
 
     if (!existing) {
+      return NextResponse.json(
+        { error: 'Scope item not found' },
+        { status: 404 }
+      )
+    }
+
+    // HOMEOWNER: verify ownership via the project
+    if (auth.user.role === 'HOMEOWNER' && existing.project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Scope item not found' },
         { status: 404 }

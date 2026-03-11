@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
+import { sendEmail, getAppUrl } from '@/lib/email'
+import { contractorSelectedEmail } from '@/lib/email-templates'
 
 type RouteParams = {
   params: Promise<{ id: string }>
@@ -9,11 +12,13 @@ type RouteParams = {
 // POST /api/projects/[id]/select-contractor - Accept a proposal and reject others
 const selectContractorSchema = z.object({
   proposal_id: z.string().uuid(),
-  owner_id: z.string().uuid(),
 })
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    const auth = await authenticateRequest(['HOMEOWNER'])
+    if (!auth.user) return auth.response
+
     const { id: projectId } = await params
     const body = await request.json()
     const data = selectContractorSchema.parse(body)
@@ -35,7 +40,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    if (project.owner_id !== data.owner_id) {
+    // Verify ownership using authenticated user
+    if (project.owner_id !== auth.user.id) {
       return NextResponse.json(
         { error: 'Only the project owner can select a contractor' },
         { status: 403 }
@@ -81,8 +87,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    // Execute in transaction: accept selected, reject others, update project status
+    // Execute in transaction with status guards to prevent TOCTOU race
     const result = await db.$transaction(async (tx) => {
+      // Re-check project status INSIDE the transaction to prevent race
+      const freshProject = await tx.project.findUnique({
+        where: { id: projectId },
+        select: { status: true },
+      })
+
+      if (!freshProject || freshProject.status !== 'BIDDING') {
+        throw new Error('CONFLICT: Project is no longer in BIDDING status')
+      }
+
+      // Re-check proposal status INSIDE the transaction
+      const freshProposal = await tx.proposal.findUnique({
+        where: { id: data.proposal_id },
+        select: { status: true, project_id: true },
+      })
+
+      if (!freshProposal || freshProposal.status !== 'SUBMITTED' || freshProposal.project_id !== projectId) {
+        throw new Error('CONFLICT: Proposal is no longer valid for acceptance')
+      }
+
       // Accept the selected proposal
       const acceptedProposal = await tx.proposal.update({
         where: { id: data.proposal_id },
@@ -130,6 +156,27 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return { project: updatedProject, proposal: acceptedProposal }
     })
 
+    // Notify selected contractor (fire-and-forget)
+    void (async () => {
+      try {
+        const contractor = result.proposal.contractor
+        if (contractor?.email) {
+          const prop = result.project.property
+          const address = `${prop.address_line1}, ${prop.city} ${prop.state}`
+          const appUrl = getAppUrl()
+          const template = contractorSelectedEmail({
+            contractorFirstName: contractor.first_name,
+            propertyAddress: address,
+            totalAmount: Number(result.proposal.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 }),
+            viewLink: `${appUrl}/contractor/projects/${projectId}`,
+          })
+          await sendEmail({ to: contractor.email, ...template })
+        }
+      } catch (emailErr) {
+        console.error('[notify] Contractor selected email failed:', emailErr)
+      }
+    })()
+
     return NextResponse.json({
       message: 'Contractor selected successfully',
       project: result.project,
@@ -141,6 +188,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json(
         { error: 'Invalid request data', details: error.issues },
         { status: 400 }
+      )
+    }
+    // Handle TOCTOU race condition — concurrent request already changed state
+    if (error instanceof Error && error.message.startsWith('CONFLICT:')) {
+      return NextResponse.json(
+        { error: error.message.replace('CONFLICT: ', '') },
+        { status: 409 }
       )
     }
     return NextResponse.json(

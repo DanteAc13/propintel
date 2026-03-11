@@ -33,7 +33,13 @@ export async function login(formData: FormData) {
     return { error: 'User account not found. Please contact support.' }
   }
 
-  // Redirect to role-specific dashboard
+  // Honor redirectTo if it's a safe internal path
+  const redirectTo = formData.get('redirectTo') as string | null
+  if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
+    redirect(redirectTo)
+  }
+
+  // Otherwise redirect to role-specific dashboard
   const dashboardPaths: Record<Role, string> = {
     HOMEOWNER: '/homeowner/dashboard',
     INSPECTOR: '/inspector/dashboard',
@@ -61,9 +67,11 @@ export async function signup(formData: FormData) {
     return { error: 'Password must be at least 6 characters' }
   }
 
-  const validRoles: Role[] = ['HOMEOWNER', 'INSPECTOR', 'CONTRACTOR']
-  if (!validRoles.includes(role)) {
-    return { error: 'Invalid role selected' }
+  // Only HOMEOWNER can self-register. INSPECTOR and CONTRACTOR roles
+  // require admin approval — admin creates the account or upgrades the role.
+  const validSelfSignupRoles: Role[] = ['HOMEOWNER']
+  if (!validSelfSignupRoles.includes(role)) {
+    return { error: 'Only homeowner accounts can be created through self-signup. Contact an admin for inspector or contractor access.' }
   }
 
   // Create Supabase auth user

@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/api-auth'
 
 // GET /api/contractor/profile - Get contractor's profile
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('user_id')
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID required' },
-        { status: 400 }
-      )
-    }
+    // ADMIN can optionally view another contractor's profile
+    const { searchParams } = new URL(request.url)
+    const targetUserId =
+      user.role === 'ADMIN' && searchParams.get('user_id')
+        ? searchParams.get('user_id')!
+        : user.id
 
     const profile = await db.contractorProfile.findUnique({
-      where: { user_id: userId },
+      where: { user_id: targetUserId },
       include: {
         user: {
           select: {
@@ -57,7 +59,6 @@ export async function GET(request: NextRequest) {
 
 // PUT /api/contractor/profile - Create or update contractor profile
 const profileSchema = z.object({
-  user_id: z.string().uuid(),
   company_name: z.string().min(1),
   license_number: z.string().optional().nullable(),
   license_image_url: z.string().url().optional().nullable(),
@@ -71,12 +72,18 @@ const profileSchema = z.object({
 
 export async function PUT(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(['CONTRACTOR', 'ADMIN'])
+    if (!auth.user) return auth.response
+    const { user } = auth
+
     const body = await request.json()
     const data = profileSchema.parse(body)
 
+    const targetUserId = user.id
+
     // Check if profile exists
     const existing = await db.contractorProfile.findUnique({
-      where: { user_id: data.user_id },
+      where: { user_id: targetUserId },
     })
 
     let profile
@@ -84,7 +91,7 @@ export async function PUT(request: NextRequest) {
     if (existing) {
       // Update existing profile
       profile = await db.contractorProfile.update({
-        where: { user_id: data.user_id },
+        where: { user_id: targetUserId },
         data: {
           company_name: data.company_name,
           license_number: data.license_number,
@@ -112,7 +119,7 @@ export async function PUT(request: NextRequest) {
       // Create new profile (status is PENDING by default)
       profile = await db.contractorProfile.create({
         data: {
-          user_id: data.user_id,
+          user_id: targetUserId,
           company_name: data.company_name,
           license_number: data.license_number,
           license_image_url: data.license_image_url,
